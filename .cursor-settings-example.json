@@ -1,0 +1,56 @@
+{
+  "// 说明": "这是 Cursor DeepRoute Compile Commands 插件的配置示例（v1.3.8+）",
+  "// 使用方法": "将下面的配置复制到 Cursor 的 settings.json 中",
+  
+  "// ========== Docker 容器配置 ==========": "",
+  "// 只需配置容器名称，插件会自动使用 docker 命令执行": "",
+  "deeproute-compile-commands.dockerContainerName": "deeproute-dev-x86-2004",
+  
+  "// 配置说明": "",
+  "// - 插件内置 docker 命令，无需外部脚本": "",
+  "// - 自动启动容器（如果未运行）": "",
+  "// - 容器内工作目录: /sandbox": "",
+  "// - cwd 相对于容器内 /sandbox 目录": "",
+  "// 示例": "cwd: 'blc' 对应容器内路径 /sandbox/blc",
+  
+  "// ========== 预设命令配置 ==========": "",
+  "deeproute-compile-commands.predefinedCommands": [
+    {
+      "command": "pwd",
+      "cwd": ""
+    },
+    {
+      "command": "ls -la",
+      "cwd": ""
+    },
+    {
+      "command": "git status",
+      "cwd": ""
+    },
+    {
+      "command": "git log --oneline -10",
+      "cwd": ""
+    },
+    {
+      "command": "bazel build //blc/...",
+      "cwd": ""
+    },
+    {
+      "command": "bazel test //blc/...",
+      "cwd": ""
+    },
+    {
+      "command": "bash -c 'cd blc && bazel build //...'",
+      "cwd": ""
+    }
+  ],
+  
+  "// ========== 其他可选配置 ==========": "",
+  "deeproute-compile-commands.shell": "/bin/bash",
+  
+  "deeproute-compile-commands.env": {
+    "// 示例环境变量": "",
+    "PATH": "/usr/local/bin:/usr/bin:/bin",
+    "LANG": "en_US.UTF-8"
+  }
+}
