@@ -26,6 +26,25 @@ export function activate(context: vscode.ExtensionContext) {
         showCollapseAll: true
     });
 
+    // Set context for global execute locally setting
+    const updateExecuteLocallyContext = () => {
+        const config = vscode.workspace.getConfiguration('deeproute-compile-commands');
+        const globalExecuteLocally = config.get<boolean>('executeLocally', false);
+        vscode.commands.executeCommand('setContext', 'deeproute-compile-commands.globalExecuteLocally', globalExecuteLocally);
+    };
+    
+    // Set initial context
+    updateExecuteLocallyContext();
+    
+    // Listen for configuration changes
+    context.subscriptions.push(
+        vscode.workspace.onDidChangeConfiguration(e => {
+            if (e.affectsConfiguration('deeproute-compile-commands.executeLocally')) {
+                updateExecuteLocallyContext();
+            }
+        })
+    );
+
     // Register command: Execute predefined command (Command Palette)
     const executeCommand = vscode.commands.registerCommand(
         'deeproute-compile-commands.executeCommand',
@@ -234,6 +253,36 @@ export function activate(context: vscode.ExtensionContext) {
                 value: ''
             });
 
+            // Check global execute locally setting
+            const globalExecuteLocally = config.get<boolean>('executeLocally', false);
+            
+            let executeLocally: boolean | undefined = undefined;
+            
+            // Only ask about execution mode if global switch is OFF
+            if (!globalExecuteLocally) {
+                const executionMode = await vscode.window.showQuickPick(
+                    [
+                        {
+                            label: '🐳 Docker Container',
+                            description: 'Execute in Docker container (default)',
+                            value: false
+                        },
+                        {
+                            label: '🖥️  Local (Host)',
+                            description: 'Execute on local machine',
+                            value: true
+                        }
+                    ],
+                    {
+                        placeHolder: 'Select execution mode for this command'
+                    }
+                );
+
+                // If user cancelled, default to Docker mode
+                executeLocally = executionMode?.value ?? false;
+            }
+            // If global switch is ON, don't set per-command flag (let global control it)
+
             const commands = config.get<(string | CommandConfig)[]>('predefinedCommands', []);
             
             // Check if command already exists
@@ -251,15 +300,31 @@ export function activate(context: vscode.ExtensionContext) {
             const newCommand: CommandConfig = {
                 command: command,
                 cwd: cwd?.trim() || undefined,
-                alias: alias?.trim() || undefined
+                alias: alias?.trim() || undefined,
+                executeLocally: executeLocally || undefined
             };
             commands.push(newCommand);
             await config.update('predefinedCommands', commands, vscode.ConfigurationTarget.Global);
             
             const displayName = newCommand.alias || command;
-            const msg = newCommand.cwd 
-                ? `Command added: ${displayName} (directory: ${newCommand.cwd})`
-                : `Command added: ${displayName}`;
+            
+            // Determine effective execution mode
+            const effectiveExecuteLocally = executeLocally === true || globalExecuteLocally === true;
+            const modeIcon = effectiveExecuteLocally ? '🖥️' : '🐳';
+            const modeText = effectiveExecuteLocally ? 'Local' : 'Docker';
+            
+            let msg = `${modeIcon} Command added: ${displayName}`;
+            if (newCommand.cwd) {
+                msg += ` (directory: ${newCommand.cwd})`;
+            }
+            
+            // Show execution mode info
+            if (globalExecuteLocally) {
+                msg += `\nExecution mode: ${modeText} (Global setting)`;
+            } else {
+                msg += `\nExecution mode: ${modeText}`;
+            }
+            
             vscode.window.showInformationMessage(msg);
             
             if (treeProvider) {
@@ -410,6 +475,95 @@ export function activate(context: vscode.ExtensionContext) {
         }
     );
 
+    // Shared toggle logic
+    const toggleGlobalExecutionMode = async () => {
+        const config = vscode.workspace.getConfiguration('deeproute-compile-commands');
+        const currentValue = config.get<boolean>('executeLocally', false);
+        const newValue = !currentValue;
+        
+        await config.update('executeLocally', newValue, vscode.ConfigurationTarget.Global);
+        
+        const mode = newValue ? 'Local (Host)' : 'Docker Container';
+        const icon = newValue ? '🖥️' : '🐳';
+        vscode.window.showInformationMessage(
+            `${icon} Global execution mode: ${mode}\n\nAll commands will execute in ${mode.toLowerCase()}`
+        );
+        
+        // Refresh tree view
+        if (treeProvider) {
+            treeProvider.refresh();
+        }
+    };
+
+    // Register command: Toggle execute locally (when currently in Docker mode)
+    const toggleExecuteLocally = vscode.commands.registerCommand(
+        'deeproute-compile-commands.toggleExecuteLocally',
+        toggleGlobalExecutionMode
+    );
+
+    // Register command: Toggle execute in container (when currently in Local mode)
+    const toggleExecuteInContainer = vscode.commands.registerCommand(
+        'deeproute-compile-commands.toggleExecuteInContainer',
+        toggleGlobalExecutionMode
+    );
+
+    // Register command: Toggle command execute locally
+    const toggleCommandExecuteLocally = vscode.commands.registerCommand(
+        'deeproute-compile-commands.toggleCommandExecuteLocally',
+        async (treeItem: any) => {
+            if (!treeItem || !treeItem.commandText) {
+                return;
+            }
+            
+            const config = vscode.workspace.getConfiguration('deeproute-compile-commands');
+            const predefinedCommands = config.get<any[]>('predefinedCommands', []);
+            
+            // Find the command
+            let updated = false;
+            const newCommands = predefinedCommands.map(cmd => {
+                if (typeof cmd === 'string') {
+                    // Convert string to object if matches
+                    if (cmd === treeItem.commandText) {
+                        updated = true;
+                        return {
+                            command: cmd,
+                            executeLocally: true
+                        };
+                    }
+                    return cmd;
+                } else if (cmd.command === treeItem.commandText) {
+                    updated = true;
+                    return {
+                        ...cmd,
+                        executeLocally: !cmd.executeLocally
+                    };
+                }
+                return cmd;
+            });
+            
+            if (updated) {
+                await config.update('predefinedCommands', newCommands, vscode.ConfigurationTarget.Global);
+                
+                // Find the updated command to show status
+                const updatedCmd = newCommands.find(c => 
+                    typeof c === 'object' && c.command === treeItem.commandText
+                );
+                const isLocal = updatedCmd && updatedCmd.executeLocally === true;
+                const mode = isLocal ? 'Local (Host)' : 'Docker Container';
+                const icon = isLocal ? '🖥️' : '🐳';
+                
+                vscode.window.showInformationMessage(
+                    `${icon} Command execution mode: ${mode}\n\nCommand: ${treeItem.commandText}`
+                );
+                
+                // Refresh tree view
+                if (treeProvider) {
+                    treeProvider.refresh();
+                }
+            }
+        }
+    );
+
     context.subscriptions.push(
         treeView,
         executeCommand,
@@ -422,7 +576,10 @@ export function activate(context: vscode.ExtensionContext) {
         addCommand,
         removeCommand,
         editCommandAlias,
-        configureDocker
+        configureDocker,
+        toggleExecuteLocally,
+        toggleExecuteInContainer,
+        toggleCommandExecuteLocally
     );
 }
 
@@ -440,8 +597,22 @@ async function executeCommandInternal(command: string, cwd?: string): Promise<vo
         treeProvider.addToHistory(command, cwd);
     }
 
+    // Check if command has executeLocally flag in predefined commands
+    const config = vscode.workspace.getConfiguration('deeproute-compile-commands');
+    const predefinedCommands = config.get<any[]>('predefinedCommands', []);
+    
+    let executeLocally: boolean | undefined = undefined;
+    
+    // Find matching command in predefined commands
+    for (const cmd of predefinedCommands) {
+        if (typeof cmd === 'object' && cmd.command === command) {
+            executeLocally = cmd.executeLocally === true;
+            break;
+        }
+    }
+
     // Execute command
-    await deepRouteCompileCommands.execute(command, cwd);
+    await deepRouteCompileCommands.execute(command, cwd, executeLocally);
 }
 
 export function deactivate() {

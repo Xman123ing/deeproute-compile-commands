@@ -249,8 +249,9 @@ export class DeepRouteCompileCommands {
      * @param cwd Working directory (relative path)
      *            - Host mode: relative to workspace root
      *            - Docker mode: relative to /sandbox in container
+     * @param executeLocally Per-command switch to execute locally (optional)
      */
-    async execute(command: string, cwd?: string): Promise<void> {
+    async execute(command: string, cwd?: string, executeLocally?: boolean): Promise<void> {
         // Check if workspace root is valid (checked once on initialization)
         if (!this.workspaceRootValid) {
             this.outputManager.appendLine(`\n[Error] Workspace root does not meet requirements, cannot execute command`);
@@ -260,36 +261,182 @@ export class DeepRouteCompileCommands {
 
         // Get configuration
         const config = vscode.workspace.getConfiguration('deeproute-compile-commands');
+        const globalExecuteLocally = config.get<boolean>('executeLocally', false);
         const dockerContainerName = config.get<string>('dockerContainerName', 'deeproute-dev-x86-2004');
         
-        // Docker container must be configured (use default if not set)
-        if (!dockerContainerName || !dockerContainerName.trim()) {
-            this.outputManager.show();
-            this.outputManager.appendLine(`\n========================================`);
-            this.outputManager.appendLine(`❌ Docker Container Not Configured`);
-            this.outputManager.appendLine(`========================================`);
-            this.outputManager.appendLine(`\nThis plugin requires Docker container configuration.`);
-            this.outputManager.appendLine(`\n💡 How to configure:`);
-            this.outputManager.appendLine(`   1. Open Command Palette (Ctrl/Cmd + Shift + P)`);
-            this.outputManager.appendLine(`   2. Search: "DeepRoute Compile Commands: Configure Docker Container"`);
-            this.outputManager.appendLine(`   3. Enter your container name (e.g., deeproute-dev-x86-2004)`);
-            this.outputManager.appendLine(`\n   Or manually add to settings.json:`);
-            this.outputManager.appendLine(`   "deeproute-compile-commands.dockerContainerName": "your-container-name"`);
-            this.outputManager.appendLine(`\n========================================\n`);
-            
-            vscode.window.showErrorMessage(
-                'Docker container is not configured. Please configure it in settings.',
-                'Configure Now'
-            ).then(selection => {
-                if (selection === 'Configure Now') {
-                    vscode.commands.executeCommand('deeproute-compile-commands.configureDocker');
-                }
-            });
-            return;
+        // Check if should execute locally
+        // Priority: per-command switch OR global switch
+        const shouldExecuteLocally = executeLocally === true || globalExecuteLocally === true;
+        
+        if (shouldExecuteLocally) {
+            // Execute locally
+            await this.executeLocally(command, cwd);
+        } else {
+            // Execute in Docker container
+            // Docker container must be configured (use default if not set)
+            if (!dockerContainerName || !dockerContainerName.trim()) {
+                this.outputManager.show();
+                this.outputManager.appendLine(`\n========================================`);
+                this.outputManager.appendLine(`❌ Docker Container Not Configured`);
+                this.outputManager.appendLine(`========================================`);
+                this.outputManager.appendLine(`\nThis plugin requires Docker container configuration.`);
+                this.outputManager.appendLine(`\n💡 How to configure:`);
+                this.outputManager.appendLine(`   1. Open Command Palette (Ctrl/Cmd + Shift + P)`);
+                this.outputManager.appendLine(`   2. Search: "DeepRoute Compile Commands: Configure Docker Container"`);
+                this.outputManager.appendLine(`   3. Enter your container name (e.g., deeproute-dev-x86-2004)`);
+                this.outputManager.appendLine(`\n   Or manually add to settings.json:`);
+                this.outputManager.appendLine(`   "deeproute-compile-commands.dockerContainerName": "your-container-name"`);
+                this.outputManager.appendLine(`\n========================================\n`);
+                
+                vscode.window.showErrorMessage(
+                    'Docker container is not configured. Please configure it in settings.',
+                    'Configure Now'
+                ).then(selection => {
+                    if (selection === 'Configure Now') {
+                        vscode.commands.executeCommand('deeproute-compile-commands.configureDocker');
+                    }
+                });
+                return;
+            }
+
+            await this.executeInDocker(dockerContainerName.trim(), command, cwd);
+        }
+    }
+
+    /**
+     * Execute command locally (not in Docker)
+     * @param command Command to execute
+     * @param cwd Working directory (relative path)
+     */
+    private async executeLocally(command: string, cwd?: string): Promise<void> {
+        // Stop current process if any
+        if (this.currentProcess) {
+            const shouldStop = await vscode.window.showWarningMessage(
+                'A command is currently running. Stop it?',
+                'Stop and Execute New Command',
+                'Cancel'
+            );
+
+            if (shouldStop !== 'Stop and Execute New Command') {
+                return;
+            }
+
+            this.stop();
         }
 
-        // Execute in Docker container
-        await this.executeInDocker(dockerContainerName.trim(), command, cwd);
+        // Determine actual working directory (host mode)
+        let actualCwd = this.workspaceRoot;
+        if (cwd && cwd.trim()) {
+            actualCwd = path.resolve(this.workspaceRoot, cwd.trim());
+            
+            // Check if directory exists
+            if (!fs.existsSync(actualCwd)) {
+                vscode.window.showErrorMessage(`Specified directory does not exist: ${actualCwd}`);
+                return;
+            }
+        }
+
+        // Check compile_commands.json status before command execution
+        const compileCommandsPath = path.join(actualCwd, 'compile_commands.json');
+        const beforeStats = this.getFileStats(compileCommandsPath);
+
+        // Get configuration
+        const config = vscode.workspace.getConfiguration('deeproute-compile-commands');
+        const customShell = config.get<string>('shell', '');
+        const customEnv = config.get<Record<string, string>>('env', {});
+
+        // Prepare environment variables
+        const env = {
+            ...process.env,
+            ...customEnv
+        };
+
+        // Show output panel
+        this.outputManager.show();
+        this.outputManager.appendLine(`\n========================================`);
+        this.outputManager.appendLine(`Executing: ${command}`);
+        this.outputManager.appendLine(`🖥️  Execution Mode: Local`);
+        this.outputManager.appendLine(`📁 Working Dir: ${actualCwd}`);
+        this.outputManager.appendLine(`Time: ${new Date().toLocaleString()}`);
+        this.outputManager.appendLine(`========================================\n`);
+
+        // Prepare spawn options
+        const spawnOptions: child_process.SpawnOptions = {
+            cwd: actualCwd,
+            env: env,
+            shell: customShell || true
+        };
+
+        // Show progress
+        await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: `Executing: ${command}`,
+            cancellable: true
+        }, async (progress, token) => {
+            return new Promise<void>((resolve) => {
+                // Execute command
+                this.currentProcess = child_process.spawn(command, [], spawnOptions);
+
+                // Handle cancellation
+                token.onCancellationRequested(() => {
+                    this.stop();
+                    resolve();
+                });
+
+                // Listen to stdout
+                if (this.currentProcess.stdout) {
+                    this.currentProcess.stdout.on('data', (data: Buffer) => {
+                        const output = data.toString();
+                        this.outputManager.append(output);
+                    });
+                }
+
+                // Listen to stderr
+                if (this.currentProcess.stderr) {
+                    this.currentProcess.stderr.on('data', (data: Buffer) => {
+                        const output = data.toString();
+                        this.outputManager.append(output);
+                    });
+                }
+
+                // Listen to error events
+                this.currentProcess.on('error', (error: Error) => {
+                    this.outputManager.appendLine(`\n[Error] ${error.message}`);
+                    vscode.window.showErrorMessage(`Command execution failed: ${error.message}`);
+                    this.currentProcess = undefined;
+                    resolve();
+                });
+
+                // Listen to close events
+                this.currentProcess.on('close', async (code: number | null, signal: string | null) => {
+                    this.outputManager.appendLine(`\n----------------------------------------`);
+                    
+                    if (signal) {
+                        this.outputManager.appendLine(`Command terminated by signal: ${signal}`);
+                        vscode.window.showWarningMessage(`Command terminated`);
+                    } else if (code === 0) {
+                        this.outputManager.appendLine(`Command executed successfully (exit code: ${code})`);
+                        
+                        // Check if compile_commands.json was updated
+                        const afterStats = this.getFileStats(compileCommandsPath);
+                        if (this.isCompileCommandsUpdated(beforeStats, afterStats)) {
+                            this.outputManager.appendLine(`[Clangd] compile_commands.json has been updated`);
+                            // Restart clangd language server
+                            await this.restartClangd(compileCommandsPath);
+                        } else {
+                            vscode.window.showInformationMessage(`Command executed successfully`);
+                        }
+                    } else {
+                        this.outputManager.appendLine(`Command execution failed (exit code: ${code})`);
+                        vscode.window.showErrorMessage(`Command failed with exit code: ${code}`);
+                    }
+                    
+                    this.outputManager.appendLine(`----------------------------------------\n`);
+                    this.currentProcess = undefined;
+                    resolve();
+                });
+            });
+        });
     }
 
     /**

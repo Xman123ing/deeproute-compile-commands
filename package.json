@@ -2,7 +2,7 @@
   "name": "DeepRoute-Compile-Commands",
   "displayName": "DeepRoute Compile Commands",
   "description": "Execute shell commands in workspace root and monitor output in real-time. Supports remote SSH and Docker containers",
-  "version": "1.0.5",
+  "version": "1.0.8",
   "publisher": "your-publisher-name",
   "repository": {
     "type": "git",
@@ -94,6 +94,21 @@
         "command": "deeproute-compile-commands.configureDocker",
         "title": "Configure Docker Container Name",
         "icon": "$(package)"
+      },
+      {
+        "command": "deeproute-compile-commands.toggleExecuteLocally",
+        "title": "Toggle Execute Locally",
+        "icon": "$(desktop-download)"
+      },
+      {
+        "command": "deeproute-compile-commands.toggleExecuteInContainer",
+        "title": "Toggle Execute In Container",
+        "icon": "$(package)"
+      },
+      {
+        "command": "deeproute-compile-commands.toggleCommandExecuteLocally",
+        "title": "Toggle Execute Locally",
+        "icon": "$(desktop-download)"
       }
     ],
     "configuration": {
@@ -111,9 +126,14 @@
               "command": "ARCH_VERSION=x86_2004 CORE_NUMS=12 pipeline/package.sh -w -t refresh_c01_compile_commands",
               "alias": "compile-commands-x86_2004-C01-PT",
               "cwd": "blc"
+            },
+            {
+              "command": "pwd",
+              "alias": "pwd",
+              "cwd": "blc"
             }
           ],
-          "description": "List of predefined commands. Each command can contain: command (command content), cwd (working directory), alias (display alias, optional)"
+          "description": "List of predefined commands. Each command can contain: command (command content), cwd (working directory), alias (display alias, optional), executeLocally (execute locally, optional, default false)"
         },
         "deeproute-compile-commands.shell": {
           "type": "string",
@@ -129,6 +149,11 @@
           "type": "string",
           "default": "deeproute-dev-x86-2004",
           "description": "Docker container name. All commands will execute in this container"
+        },
+        "deeproute-compile-commands.executeLocally": {
+          "type": "boolean",
+          "default": false,
+          "description": "Global switch: Execute all commands locally (not in Docker container). Can be overridden by per-command settings"
         }
       }
     },
@@ -188,6 +213,16 @@
           "command": "deeproute-compile-commands.configureDocker",
           "when": "view == deeprouteCommandsList",
           "group": "2_docker@1"
+        },
+        {
+          "command": "deeproute-compile-commands.toggleExecuteLocally",
+          "when": "view == deeprouteCommandsList && !deeproute-compile-commands.globalExecuteLocally",
+          "group": "2_docker@2"
+        },
+        {
+          "command": "deeproute-compile-commands.toggleExecuteInContainer",
+          "when": "view == deeprouteCommandsList && deeproute-compile-commands.globalExecuteLocally",
+          "group": "2_docker@2"
         }
       ],
       "view/item/context": [
@@ -210,6 +245,11 @@
           "command": "deeproute-compile-commands.removeCommand",
           "when": "view == deeprouteCommandsList && viewItem == commandItem",
           "group": "1_actions@2"
+        },
+        {
+          "command": "deeproute-compile-commands.toggleCommandExecuteLocally",
+          "when": "view == deeprouteCommandsList && viewItem == commandItem && !deeproute-compile-commands.globalExecuteLocally",
+          "group": "1_actions@3"
         },
         {
           "command": "deeproute-compile-commands.executeFromTree",

@@ -7,6 +7,7 @@ export interface CommandConfig {
     command: string;
     cwd?: string;
     alias?: string;  // 命令别名，用于显示
+    executeLocally?: boolean;  // 是否在本地执行
 }
 
 /**
@@ -37,19 +38,23 @@ export class CommandTreeItem extends vscode.TreeItem {
     public readonly commandText?: string;
     // 保存命令执行目录
     public readonly cwd?: string;
+    // 保存执行模式
+    public readonly executeLocally?: boolean;
 
     constructor(
         public readonly label: string,
         public readonly nodeType: CommandNodeType,
         public readonly collapsibleState: vscode.TreeItemCollapsibleState = vscode.TreeItemCollapsibleState.None,
         commandText?: string,
-        cwd?: string
+        cwd?: string,
+        executeLocally?: boolean
     ) {
         super(label, collapsibleState);
         
-        // Save command text and working directory
+        // Save command text, working directory, and execution mode
         this.commandText = commandText;
         this.cwd = cwd;
+        this.executeLocally = executeLocally;
 
         // Set different icons and contexts based on node type (Apple style design)
         // Root nodes use UPPERCASE labels for better visual hierarchy
@@ -85,7 +90,17 @@ export class CommandTreeItem extends vscode.TreeItem {
                 // Use run - precise execution semantics, similar to Automator.app action icon
                 this.iconPath = new vscode.ThemeIcon('run', new vscode.ThemeColor('terminal.ansiBlue'));
                 this.contextValue = 'commandItem';
-                this.tooltip = `Execute: ${this.commandText}${this.cwd ? '\nDirectory: ' + this.cwd : ''}`;
+                
+                // Build tooltip with execution mode info
+                let tooltipText = `Execute: ${this.commandText}`;
+                if (this.cwd) {
+                    tooltipText += `\nDirectory: ${this.cwd}`;
+                }
+                // Always show execution mode
+                const mode = this.executeLocally === true ? '🖥️  Local (Host)' : '🐳 Docker Container';
+                tooltipText += `\nExecution Mode: ${mode}`;
+                this.tooltip = tooltipText;
+                
                 // Set click behavior
                 this.command = {
                     command: 'deeproute-compile-commands.executeFromTree',
@@ -227,6 +242,7 @@ export class CommandTreeProvider implements vscode.TreeDataProvider<CommandTreeI
     private getPredefinedCommands(): Thenable<CommandTreeItem[]> {
         const config = vscode.workspace.getConfiguration('deeproute-compile-commands');
         const commands = config.get<(string | CommandConfig)[]>('predefinedCommands', []);
+        const globalExecuteLocally = config.get<boolean>('executeLocally', false);
 
         if (commands.length === 0) {
             return Promise.resolve([
@@ -246,19 +262,23 @@ export class CommandTreeProvider implements vscode.TreeDataProvider<CommandTreeI
                     CommandNodeType.COMMAND_ITEM,
                     vscode.TreeItemCollapsibleState.None,
                     cmd,
-                    undefined
+                    undefined,
+                    globalExecuteLocally ? true : undefined
                 );
             } else {
                 // Use alias if available, otherwise use command itself
                 const displayName = cmd.alias || cmd.command;
+                // Determine effective execution mode: local if either global or per-command flag is true
+                const effectiveExecuteLocally = cmd.executeLocally === true || globalExecuteLocally === true;
                 const item = new CommandTreeItem(
                     displayName,
                     CommandNodeType.COMMAND_ITEM,
                     vscode.TreeItemCollapsibleState.None,
                     cmd.command,
-                    cmd.cwd
+                    cmd.cwd,
+                    effectiveExecuteLocally ? true : undefined
                 );
-                // Path info only shown in tooltip (set by CommandTreeItem constructor)
+                // Path info and execution mode shown in tooltip (set by CommandTreeItem constructor)
                 return item;
             }
         });
