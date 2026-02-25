@@ -362,9 +362,7 @@ export function activate(context: vscode.ExtensionContext) {
                     await config.update('predefinedCommands', newCommands, vscode.ConfigurationTarget.Global);
                     vscode.window.showInformationMessage(`Command removed: ${command}`);
                     
-                    if (treeProvider) {
-                        treeProvider.refresh();
-                    }
+                    // TreeView will auto-refresh via configuration change listener
                 }
             }
         }
@@ -428,9 +426,7 @@ export function activate(context: vscode.ExtensionContext) {
             const displayName = newAlias.trim() || command;
             vscode.window.showInformationMessage(`✅ Alias updated: ${displayName}`);
             
-            if (treeProvider) {
-                treeProvider.refresh();
-            }
+            // TreeView will auto-refresh via configuration change listener
         }
     );
 
@@ -489,10 +485,8 @@ export function activate(context: vscode.ExtensionContext) {
             `${icon} Global execution mode: ${mode}\n\nAll commands will execute in ${mode.toLowerCase()}`
         );
         
-        // Refresh tree view
-        if (treeProvider) {
-            treeProvider.refresh();
-        }
+        // TreeView will auto-refresh via configuration change listener
+        // No manual refresh needed to avoid race condition
     };
 
     // Register command: Toggle execute locally (when currently in Docker mode)
@@ -556,10 +550,8 @@ export function activate(context: vscode.ExtensionContext) {
                     `${icon} Command execution mode: ${mode}\n\nCommand: ${treeItem.commandText}`
                 );
                 
-                // Refresh tree view
-                if (treeProvider) {
-                    treeProvider.refresh();
-                }
+                // TreeView will auto-refresh via configuration change listener
+                // No manual refresh needed to avoid race condition
             }
         }
     );

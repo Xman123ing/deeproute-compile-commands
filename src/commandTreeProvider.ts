@@ -145,7 +145,8 @@ export class CommandTreeProvider implements vscode.TreeDataProvider<CommandTreeI
         
         // Listen to configuration changes
         vscode.workspace.onDidChangeConfiguration(e => {
-            if (e.affectsConfiguration('deeproute-compile-commands.predefinedCommands')) {
+            if (e.affectsConfiguration('deeproute-compile-commands.predefinedCommands') ||
+                e.affectsConfiguration('deeproute-compile-commands.executeLocally')) {
                 this.refresh();
             }
         });
