@@ -2,7 +2,7 @@
   "name": "DeepRoute-Compile-Commands",
   "displayName": "DeepRoute Compile Commands",
   "description": "Execute shell commands in workspace root and monitor output in real-time. Supports remote SSH and Docker containers",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "publisher": "your-publisher-name",
   "repository": {
     "type": "git",

@@ -9,14 +9,10 @@ export class DeepRouteCompileCommands {
     private currentProcess: child_process.ChildProcess | undefined;
     private workspaceRoot: string;
     private outputManager: OutputManager;
-    private workspaceRootValid: boolean = false;  // Whether workspace root is valid
 
     constructor(workspaceRoot: string, outputManager: OutputManager) {
         this.workspaceRoot = workspaceRoot;
         this.outputManager = outputManager;
-        
-        // Check workspace root on initialization
-        this.workspaceRootValid = this.checkWorkspaceRoot();
     }
 
     /**
@@ -225,8 +221,8 @@ export class DeepRouteCompileCommands {
                         const afterStats = this.getFileStats(compileCommandsPath);
                         if (this.isCompileCommandsUpdated(beforeStats, afterStats)) {
                             this.outputManager.appendLine(`[Clangd] compile_commands.json has been updated`);
-                            // Restart clangd language server
-                            await this.restartClangd(compileCommandsPath);
+                            // Docker mode: replace /sandbox paths before restarting clangd
+                            await this.restartClangd(compileCommandsPath, true);
                         } else {
                             vscode.window.showInformationMessage(`Command executed successfully`);
                         }
@@ -252,13 +248,6 @@ export class DeepRouteCompileCommands {
      * @param executeLocally Per-command switch to execute locally (optional)
      */
     async execute(command: string, cwd?: string, executeLocally?: boolean): Promise<void> {
-        // Check if workspace root is valid (checked once on initialization)
-        if (!this.workspaceRootValid) {
-            this.outputManager.appendLine(`\n[Error] Workspace root does not meet requirements, cannot execute command`);
-            vscode.window.showErrorMessage('Workspace root does not meet requirements. Please open the project in the correct directory');
-            return;
-        }
-
         // Get configuration
         const config = vscode.workspace.getConfiguration('deeproute-compile-commands');
         const globalExecuteLocally = config.get<boolean>('executeLocally', false);
@@ -269,10 +258,34 @@ export class DeepRouteCompileCommands {
         const shouldExecuteLocally = executeLocally === true || globalExecuteLocally === true;
         
         if (shouldExecuteLocally) {
-            // Execute locally
+            // Local mode: Cursor is running inside the Docker container
+            // workspace root should be /sandbox
+            if (!this.workspaceRoot.startsWith('/sandbox')) {
+                this.outputManager.show();
+                this.outputManager.appendLine(`\n[Error] Local mode requires workspace root to be /sandbox`);
+                this.outputManager.appendLine(`  Current workspace root: ${this.workspaceRoot}`);
+                this.outputManager.appendLine(`  Please open the project inside the Docker container (e.g., /sandbox or /sandbox/blc)`);
+                vscode.window.showErrorMessage(
+                    `Local mode error: workspace root must be /sandbox, current: ${this.workspaceRoot}`
+                );
+                return;
+            }
             await this.executeLocally(command, cwd);
         } else {
-            // Execute in Docker container
+            // Container mode: Cursor is running on the host machine
+            // workspace root should be $HOME/codetree/repo
+            const expectedRoot = path.join(os.homedir(), 'codetree', 'repo');
+            if (this.workspaceRoot !== expectedRoot) {
+                this.outputManager.show();
+                this.outputManager.appendLine(`\n[Error] Container mode requires workspace root to be ${expectedRoot}`);
+                this.outputManager.appendLine(`  Current workspace root: ${this.workspaceRoot}`);
+                this.outputManager.appendLine(`  Please open the project on the host machine at $HOME/codetree/repo`);
+                vscode.window.showErrorMessage(
+                    `Container mode error: workspace root must be ${expectedRoot}, current: ${this.workspaceRoot}`
+                );
+                return;
+            }
+
             // Docker container must be configured (use default if not set)
             if (!dockerContainerName || !dockerContainerName.trim()) {
                 this.outputManager.show();
@@ -421,8 +434,8 @@ export class DeepRouteCompileCommands {
                         const afterStats = this.getFileStats(compileCommandsPath);
                         if (this.isCompileCommandsUpdated(beforeStats, afterStats)) {
                             this.outputManager.appendLine(`[Clangd] compile_commands.json has been updated`);
-                            // Restart clangd language server
-                            await this.restartClangd(compileCommandsPath);
+                            // Local mode: paths are already correct, no /sandbox replacement needed
+                            await this.restartClangd(compileCommandsPath, false);
                         } else {
                             vscode.window.showInformationMessage(`Command executed successfully`);
                         }
@@ -580,13 +593,22 @@ export class DeepRouteCompileCommands {
     /**
      * Restart clangd language server
      * @param compileCommandsPath Path to compile_commands.json
+     * @param isDockerMode Whether the command was executed in Docker container
+     *                     - true:  Docker mode, /sandbox paths need to be replaced with host paths
+     *                     - false: Local mode, paths are already correct, no replacement needed
      */
-    private async restartClangd(compileCommandsPath: string): Promise<void> {
+    private async restartClangd(compileCommandsPath: string, isDockerMode: boolean): Promise<void> {
         try {
             this.outputManager.appendLine(`[Clangd] Preparing to reload compile_commands.json and index C++ symbols...`);
             
-            // Replace paths in file
-            const replaced = this.replaceCompileCommandsPath(compileCommandsPath);
+            // Only replace /sandbox paths in Docker mode
+            // In local mode, paths in compile_commands.json are already correct host paths
+            if (isDockerMode) {
+                this.outputManager.appendLine(`[Clangd] Docker mode: replacing /sandbox paths with host paths...`);
+                this.replaceCompileCommandsPath(compileCommandsPath);
+            } else {
+                this.outputManager.appendLine(`[Clangd] Local mode: paths are already correct, skipping /sandbox replacement`);
+            }
             
             // Check available clangd commands
             const allCommands = await vscode.commands.getCommands();
@@ -616,21 +638,4 @@ export class DeepRouteCompileCommands {
         }
     }
 
-    /**
-     * Check if workspace root is $HOME/codetree/repo
-     * Called once during plugin initialization
-     */
-    private checkWorkspaceRoot(): boolean {
-        const homeDir = os.homedir();
-        const expectedRoot = path.join(homeDir, 'codetree', 'repo');
-        
-        if (this.workspaceRoot !== expectedRoot) {
-            // Show error notification (no log output as this may be during initialization)
-            const errorMsg = `Workspace root must be $HOME/codetree/repo\nExpected: ${expectedRoot}\nActual: ${this.workspaceRoot}`;
-            vscode.window.showErrorMessage(errorMsg, { modal: false });
-            return false;
-        }
-        
-        return true;
-    }
 }
